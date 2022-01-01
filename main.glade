@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generated with glade 3.38.2 -->
+<interface>
+  <requires lib="gtk+" version="3.24"/>
+  <object class="GtkAdjustment" id="adjustment1">
+    <property name="lower">-15</property>
+    <property name="upper">15</property>
+    <property name="step-increment">1</property>
+    <property name="page-increment">10</property>
+  </object>
+  <object class="GtkApplicationWindow" id="window1">
+    <property name="can-focus">False</property>
+    <child>
+      <object class="GtkDrawingArea" id="draw_area">
+        <property name="visible">True</property>
+        <property name="can-focus">False</property>
+        <signal name="button-press-event" handler="on_button_press" swapped="no"/>
+        <signal name="button-release-event" handler="on_button_release" swapped="no"/>
+        <signal name="draw" handler="on_draw" swapped="no"/>
+        <signal name="motion-notify-event" handler="on_motion" swapped="no"/>
+        <signal name="scroll-event" handler="on_scroll" swapped="no"/>
+      </object>
+    </child>
+  </object>
+</interface>
