@@ -3,15 +3,21 @@
 #include<stdint.h>
 #include<gtk/gtk.h>
 #include<math.h>
+#include "sound.h"
 #include "render.h"
 #include "panel.h"
 
 uint32_t sample_rate;
 uint32_t num_samples;
 double* samples;
+int sample_step;
 
-const int n=512;
-const int m=800;
+int playing=0;
+int play_auto=0;
+playback_state_t playback_state;
+
+int button_pressed=0;
+
 
 cairo_surface_t* surface;
 
@@ -132,39 +138,60 @@ return 0;
 
 
 
+typedef struct
+{
+int x_origin;
+float x_tick_spacing;
+float x_limit_low;
+float x_limit_high;
+cairo_surface_t* spectrogram;
+}plot_data_t;
+
+plot_data_t plot_data;
+
+double plot_x_from_index(plot_data_t* plot_data,int index)
+{
+return plot_data->x_origin+plot_data->x_tick_spacing*index/(float)sample_rate;
+}
+
+int plot_index_from_x(plot_data_t* plot_data,double x)
+{
+return (int)round(sample_rate*(x-plot_data->x_origin)/plot_data->x_tick_spacing);
+}
+
 
 gboolean on_draw(GtkWidget *widget,cairo_t *cr,gpointer unused)
 {
 GdkRGBA color;
 GtkStyleContext* context=gtk_widget_get_style_context(widget);
+
 int width=gtk_widget_get_allocated_width(widget);
 int height=gtk_widget_get_allocated_height(widget);
-
 gtk_render_background(context,cr,0,0,width,height);
 
 cairo_set_font_size(cr,12);
 cairo_set_line_width(cr,1);
 
-int x_origin=75;
+plot_data.x_origin=75;
 int y_origin=height-50;
 int x_length=cairo_image_surface_get_width(surface);
 int y_length=cairo_image_surface_get_height(surface);
 
 
-cairo_set_source_surface(cr,surface,x_origin,y_origin-cairo_image_surface_get_height(surface));
+cairo_set_source_surface(cr,surface,plot_data.x_origin,y_origin-cairo_image_surface_get_height(surface));
 cairo_rectangle(cr,0,0,width,height);
 cairo_fill(cr);
 
 //Draw X axis
 cairo_set_source_rgba(cr,0,0,0,1.0);
-cairo_move_to(cr,x_origin,y_origin+0.5);
-cairo_line_to(cr,x_origin+x_length,y_origin+0.5);
+cairo_move_to(cr,plot_data.x_origin,y_origin+0.5);
+cairo_line_to(cr,plot_data.x_origin+x_length,y_origin+0.5);
 cairo_stroke(cr);
-float x_tick_spacing=round(sample_rate/600.0);
-int x_ticks=(int)floor(x_length/x_tick_spacing);
+plot_data.x_tick_spacing=round(sample_rate/1200.0);
+int x_ticks=(int)floor(x_length/plot_data.x_tick_spacing);
 	for(int i=0;i<x_ticks;i++)
 	{
-	float x_offset=x_origin+i*x_tick_spacing+0.5;
+	float x_offset=plot_data.x_origin+i*plot_data.x_tick_spacing+0.5;
 	cairo_move_to(cr,x_offset,y_origin);
 	cairo_line_to(cr,x_offset,y_origin+6);
 	cairo_stroke(cr);
@@ -181,14 +208,14 @@ int x_ticks=(int)floor(x_length/x_tick_spacing);
 const int y_ticks=8;
 const int y_tick_freqs[8]={20000,10000,5000,2000,1000,500,200,100};
 
-cairo_move_to(cr,x_origin+0.5,y_origin);
-cairo_line_to(cr,x_origin+0.5,y_origin-y_length);
+cairo_move_to(cr,plot_data.x_origin+0.5,y_origin);
+cairo_line_to(cr,plot_data.x_origin+0.5,y_origin-y_length);
 
 	for(int i=0;i<y_ticks;i++)
 	{
 	float y_offset=y_origin-round(y_length*(1.0-(log(y_tick_freqs[i])-log(y_tick_freqs[0]))/(log(y_tick_freqs[y_ticks-1])-log(y_tick_freqs[0]))))+0.5;
-	cairo_move_to(cr,x_origin,y_offset);
-	cairo_line_to(cr,x_origin-5,y_offset);
+	cairo_move_to(cr,plot_data.x_origin,y_offset);
+	cairo_line_to(cr,plot_data.x_origin-5,y_offset);
 	cairo_stroke(cr);
 	
 	char label[256];
@@ -196,13 +223,83 @@ cairo_line_to(cr,x_origin+0.5,y_origin-y_length);
 		else sprintf(label,"%d Hz",y_tick_freqs[i]);
 	cairo_text_extents_t extents;
 	cairo_text_extents(cr,label,&extents);	
-	cairo_move_to(cr,(int)(x_origin-(int)(extents.width)-extents.x_bearing-8),(int)(y_offset-extents.y_bearing-(int)(extents.height/2)));
+	cairo_move_to(cr,(int)(plot_data.x_origin-(int)(extents.width)-extents.x_bearing-8),(int)(y_offset-extents.y_bearing-(int)(extents.height/2)));
 	cairo_show_text(cr,label);
 	cairo_fill(cr);
 	}
 
+int cursor_offset=plot_x_from_index(&plot_data,playback_state.index);
+cairo_move_to(cr,cursor_offset+0.5,y_origin);
+cairo_line_to(cr,cursor_offset+0.5,y_origin-y_length);
+cairo_set_source_rgba(cr,1.0,0,1.0,1.0);
+cairo_stroke(cr);
+
 return FALSE;
 }
+
+int update_plot(gpointer data)
+{
+	if(playing)g_timeout_add(50,update_plot,data);
+gtk_widget_queue_draw(GTK_WIDGET(data));
+}
+
+void pause_audio()
+{
+	if(playing)
+	{
+	sound_stop(&playback_state);
+	playing=0;
+	}
+}
+
+void play_audio()
+{
+	if(playing)pause_audio();
+sound_play(&playback_state,samples,num_samples,sample_rate,playback_state.index);
+playing=1;
+}
+
+
+void play_clicked(GtkWidget *widget,gpointer data)
+{
+	if(playing)return;
+play_audio();
+update_plot(data);
+play_auto=1;
+}
+
+void pause_clicked(GtkWidget *widget,gpointer data)
+{
+pause_audio();
+play_auto=0;
+}
+
+
+
+gboolean on_motion(GtkWidget *widget,GdkEvent *event,gpointer user_data)
+{
+	if(button_pressed)
+	{
+	pause_audio();
+	playback_state.index=plot_index_from_x(&plot_data,event->motion.x);
+	gtk_widget_queue_draw(GTK_WIDGET(widget));
+	}
+}
+
+gboolean on_button_press(GtkWidget *widget,GdkEvent *event,gpointer user_data)
+{
+button_pressed=1;
+}
+
+gboolean on_button_release(GtkWidget *widget,GdkEvent *event,gpointer user_data)
+{
+playback_state.index=plot_index_from_x(&plot_data,event->button.x);
+	if(play_auto)play_audio();
+button_pressed=0;
+update_plot(widget);
+}
+
+
 
 
 int main(int argc,char **argv)
@@ -213,7 +310,7 @@ int main(int argc,char **argv)
 	return 1;
 	}
 
-surface=cairo_image_surface_create(CAIRO_FORMAT_RGB24,m,n);
+surface=cairo_image_surface_create(CAIRO_FORMAT_RGB24,1200,800);
 
 
 /*
@@ -233,9 +330,11 @@ samples=calloc(num_samples,sizeof(double));
 	return 1;
 	}	
 
-draw_spectrogram(surface,samples,600,2048);
+sample_step=1200;
+draw_spectrogram(surface,2048,48000,100.0,20000,sample_step,samples);
 
 
+	if(sound_init())return 1;
 
 
 gtk_init(&argc,&argv);
@@ -259,6 +358,8 @@ gtk_builder_connect_signals(builder,NULL);
 gtk_widget_show_all(window);
 
 gtk_main();
-	
+
+
+sound_finish();	
 return 0;
 }

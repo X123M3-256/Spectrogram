@@ -10,8 +10,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED gtk+-3.0)
 
 
-add_executable(spectrogram src/main.c src/render.c src/fft.c src/fftsg.c)
+add_executable(spectrogram src/main.c src/render.c src/fft.c src/sound.c src/fftsg.c)
 target_include_directories(spectrogram PRIVATE ${GTK_INCLUDE_DIRS} ${OPENGL_INCLUDE_DIR}/Headers)
-target_link_libraries(spectrogram PRIVATE m ${GTK_LIBRARIES})
+target_link_libraries(spectrogram PRIVATE m ${GTK_LIBRARIES} portaudio)
 set_property(TARGET spectrogram PROPERTY C_STANDARD 99)
 

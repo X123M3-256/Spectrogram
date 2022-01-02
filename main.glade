@@ -11,14 +11,78 @@
   <object class="GtkApplicationWindow" id="window1">
     <property name="can-focus">False</property>
     <child>
-      <object class="GtkDrawingArea" id="draw_area">
+      <object class="GtkBox">
         <property name="visible">True</property>
         <property name="can-focus">False</property>
-        <signal name="button-press-event" handler="on_button_press" swapped="no"/>
-        <signal name="button-release-event" handler="on_button_release" swapped="no"/>
-        <signal name="draw" handler="on_draw" swapped="no"/>
-        <signal name="motion-notify-event" handler="on_motion" swapped="no"/>
-        <signal name="scroll-event" handler="on_scroll" swapped="no"/>
+        <property name="orientation">vertical</property>
+        <child>
+          <object class="GtkToolbar">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <child>
+              <object class="GtkToolButton">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="label" translatable="yes">__glade_unnamed_3</property>
+                <property name="use-underline">True</property>
+                <property name="stock-id">gtk-open</property>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="homogeneous">True</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkToolButton">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="label" translatable="yes">__glade_unnamed_4</property>
+                <property name="use-underline">True</property>
+                <property name="stock-id">gtk-media-play</property>
+                <signal name="clicked" handler="play_clicked" object="draw_area" swapped="no"/>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="homogeneous">True</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkToolButton">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="label" translatable="yes">__glade_unnamed_5</property>
+                <property name="use-underline">True</property>
+                <property name="stock-id">gtk-media-pause</property>
+                <signal name="clicked" handler="pause_clicked" object="draw_area" swapped="no"/>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="homogeneous">True</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkDrawingArea" id="draw_area">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <signal name="button-press-event" handler="on_button_press" swapped="no"/>
+            <signal name="button-release-event" handler="on_button_release" swapped="no"/>
+            <signal name="draw" handler="on_draw" swapped="no"/>
+            <signal name="motion-notify-event" handler="on_motion" swapped="no"/>
+            <signal name="scroll-event" handler="on_scroll" swapped="no"/>
+          </object>
+          <packing>
+            <property name="expand">True</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
+          </packing>
+        </child>
       </object>
     </child>
   </object>

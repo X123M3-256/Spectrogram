@@ -1,5 +1,6 @@
 #include<stdlib.h>
 #include<stdio.h>
+#include<stdint.h>
 #include<math.h>
 #include "render.h"
 #include "fft.h"
@@ -39,7 +40,7 @@ u=u-index;
 }
 
 double scale_colors[3*6]={0,0.0,0.5, 0.0,0.0,1.0, 0.0,0.0,0.0, 1.0,0.0,0.0, 1.0,1.0,0.0, 1.0,1.0,1.0};
-color_map_t scale={-3,2,6,scale_colors};
+color_map_t scale={-2,3,6,scale_colors};
 
 
 //24KHz 12KHz 6KHz 3KHz 1500Hz 750Hz 375Hz 187.5Hz
@@ -48,7 +49,25 @@ color_map_t scale={-3,2,6,scale_colors};
 const int y_tick_freqs[10]={20000,10000,5000,2000,1000,500,200,100,50,20};
 
 
-void draw_spectrogram(cairo_surface_t* surface,double* samples,int step,int resolution)
+/*
+double fourier_transform(int n,float* samples)
+{
+double N=n;
+double real=0.0;
+double imag=0.0;
+	for(int i=0;i<n;i++)
+	{
+	double theta=2*M_PI*k*i/N;
+	real+= samples[i]*cos(theta);
+	imag+=-samples[i]*sin(theta);
+	}
+return sqrt(real*real+imag*imag);
+}
+*/
+
+
+
+void draw_spectrogram(cairo_surface_t* surface,int resolution,float sample_rate,float freq_low,float freq_high,int sample_step,double* samples)
 {
 cairo_surface_flush(surface);
 int stride=cairo_image_surface_get_stride(surface);
@@ -64,37 +83,37 @@ double* magnitude=calloc(resolution/2,sizeof(double));
 
 	for(int j=0;j<m;j++)
 	{
-	fft_transform(&fft,samples+step*j,result);
+	fft_transform(&fft,samples+sample_step*j,result);
 		for(int k=0;k<resolution/2;k++)
 		{
 		magnitude[k]=sqrt(result[2*k]*result[2*k]+result[2*k+1]*result[2*k+1]);
 		}
 		
 
-	float freq_low=100.0;
-	float freq_high=20000.0;
 
-	float a=log(freq_high/freq_low)/(float)(n-1);
+	float a=log(freq_high/freq_low)/((float)n);
 		for(int k=0;k<n;k++)
 		{
-		float freq=freq_low*exp(a*k);
-		float y_offset=0.5*resolution*freq/24000;
-		int i=(int)floor(y_offset);
-			if(i<0)
+		float pixel_freq_low=freq_low*exp(a*k);
+		float pixel_freq_high=freq_low*exp(a*(k+1));
+		float pixel_index_low=resolution*pixel_freq_low/sample_rate;
+		float pixel_index_high=resolution*pixel_freq_high/sample_rate;
+
+		int i_low=(int)floor(pixel_index_low);
+		int i_high=(int)floor(pixel_index_high);
+		float value=0.0;
+			if(i_low==i_high)
 			{
-			printf("Lower limit exceeded\n");
-			i=0;
+			//Pixel smaller than samples; interpolate
+			float u=0.5*(pixel_index_high+pixel_index_low)-i_low;
+			value=magnitude[i_low]+u*(magnitude[i_low+1]-magnitude[i_low]);
 			}
-
-			if(i>=resolution/2)
+			else
 			{
-			printf("Upper limit exceeded %f %f\n",freq,y_offset);
-			i=n/2-1;
+			//Pixel larger than samples, average
+				for(int i=i_low+1;i<=i_high;i++)value+=magnitude[i];
+			value/=i_high-i_low;
 			}
-
-		float u=y_offset-i;
-		float value=magnitude[i]+u*(magnitude[i+1]-magnitude[i]);
-
 		int index=4*j+((n-1)-k)*stride;
 		double intensity=log10(value);
 		*((uint32_t*)(data+index))=color_map(scale,intensity);
