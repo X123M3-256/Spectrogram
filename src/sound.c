@@ -37,6 +37,7 @@ return 0;
 
 int sound_play(playback_state_t* state,double* samples,int num_samples,int sample_rate,int start_sample)
 {
+	if(samples==NULL)return 1;
 state->samples=samples;
 state->num_samples=num_samples;
 state->index=start_sample;

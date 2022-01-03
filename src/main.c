@@ -7,19 +7,11 @@
 #include "render.h"
 #include "panel.h"
 
-uint32_t sample_rate;
-uint32_t num_samples;
-double* samples;
-int sample_step;
-
 int playing=0;
 int play_auto=0;
 playback_state_t playback_state;
 
 int button_pressed=0;
-
-
-cairo_surface_t* surface;
 
 
 typedef struct
@@ -35,6 +27,10 @@ uint32_t id;
 uint32_t size;
 }subchunk_header_t;
 
+
+plot_data_t plot_data;
+
+
 typedef struct
 {
 uint16_t audio_format;
@@ -44,6 +40,44 @@ uint32_t byte_rate;
 uint16_t block_align;
 uint16_t bits_per_sample;
 }format_chunk_t;
+
+
+void pause_audio()
+{
+	if(playing)
+	{
+	sound_stop(&playback_state);
+	playing=0;
+	}
+}
+
+void play_audio()
+{
+	if(playing)pause_audio();
+	if(!sound_play(&playback_state,plot_data.samples,plot_data.num_samples,plot_data.sample_rate,playback_state.index))playing=1;
+}
+
+int update_plot(gpointer data)
+{
+plot_data.index=playback_state.index;
+	if(playing&&plot_x_from_index(&plot_data,plot_data.index)>75+plot_get_x_length(&plot_data)-plot_data.x_tick_spacing)
+	{
+	plot_data.x_scroll=(int)floor(plot_data.index/plot_data.sample_rate)-1;
+	plot_update_spectrogram(&plot_data);
+	}
+	if(playing)
+	{
+		if(playback_state.index>=plot_data.num_samples-1)
+		{
+		pause_audio();
+		play_auto=0;
+		}
+		else g_timeout_add(50,update_plot,data);
+	}
+gtk_widget_queue_draw(GTK_WIDGET(data));
+}
+
+
 
 int load_wav(const char* filename)
 {
@@ -88,7 +122,7 @@ subchunk_header_t subchunk_header;
 			printf("File is not 16 bit PCM mono\n");
 			return 1;
 			}
-		sample_rate=format.sample_rate;
+		plot_data.sample_rate=format.sample_rate;
 
 			if(subchunk_header.size>16)fseek(file,subchunk_header.size-16,SEEK_CUR);
 
@@ -108,16 +142,17 @@ subchunk_header_t subchunk_header;
 			return 1;
 			}
 
-		num_samples=subchunk_header.size/2;
-		int16_t* data=calloc(num_samples,sizeof(int16_t));
-		samples=calloc(num_samples,sizeof(double));
-			if(fread(data,2,num_samples,file)!=num_samples)
+		plot_data.num_samples=subchunk_header.size/2;
+		int16_t* data=calloc(plot_data.num_samples,sizeof(int16_t));
+		free(plot_data.samples);
+		plot_data.samples=calloc(plot_data.num_samples,sizeof(double));
+			if(fread(data,2,plot_data.num_samples,file)!=plot_data.num_samples)
 			{
 			printf("Failed reading data subchunk\n");
 			return 1;
 			}
 		
-			for(int i=0;i<num_samples;i++)samples[i]=data[i]/32767.0;
+			for(int i=0;i<plot_data.num_samples;i++)plot_data.samples[i]=data[i]/32767.0;
 		free(data);
 		}
 		else
@@ -129,35 +164,26 @@ subchunk_header_t subchunk_header;
 
 
 //printf("Sample depth %d\n",header.bits_per_sample);
-//printf("Sample rate %d\n",header.sample_rate);
+//printf("Sample rate %d\n",header.plot_data.sample_rate);
 //printf("Channels %d\n",header.num_channels);
 
 fclose(file);
+
+
+
+pause_audio();
+play_auto=0;
+playback_state.index=0;
+plot_data.x_scroll=0;
+plot_data.spectrum_cache.start_index=-1;
+plot_data.spectrum_cache.sample_rate=plot_data.sample_rate;
 return 0;
 }
 
 
 
-typedef struct
-{
-int x_origin;
-float x_tick_spacing;
-float x_limit_low;
-float x_limit_high;
-cairo_surface_t* spectrogram;
-}plot_data_t;
 
-plot_data_t plot_data;
 
-double plot_x_from_index(plot_data_t* plot_data,int index)
-{
-return plot_data->x_origin+plot_data->x_tick_spacing*index/(float)sample_rate;
-}
-
-int plot_index_from_x(plot_data_t* plot_data,double x)
-{
-return (int)round(sample_rate*(x-plot_data->x_origin)/plot_data->x_tick_spacing);
-}
 
 
 gboolean on_draw(GtkWidget *widget,cairo_t *cr,gpointer unused)
@@ -165,99 +191,16 @@ gboolean on_draw(GtkWidget *widget,cairo_t *cr,gpointer unused)
 GdkRGBA color;
 GtkStyleContext* context=gtk_widget_get_style_context(widget);
 
-int width=gtk_widget_get_allocated_width(widget);
-int height=gtk_widget_get_allocated_height(widget);
-gtk_render_background(context,cr,0,0,width,height);
+plot_update_size(&plot_data,gtk_widget_get_allocated_width(widget),gtk_widget_get_allocated_height(widget));
 
-cairo_set_font_size(cr,12);
-cairo_set_line_width(cr,1);
-
-plot_data.x_origin=75;
-int y_origin=height-50;
-int x_length=cairo_image_surface_get_width(surface);
-int y_length=cairo_image_surface_get_height(surface);
-
-
-cairo_set_source_surface(cr,surface,plot_data.x_origin,y_origin-cairo_image_surface_get_height(surface));
-cairo_rectangle(cr,0,0,width,height);
-cairo_fill(cr);
-
-//Draw X axis
-cairo_set_source_rgba(cr,0,0,0,1.0);
-cairo_move_to(cr,plot_data.x_origin,y_origin+0.5);
-cairo_line_to(cr,plot_data.x_origin+x_length,y_origin+0.5);
-cairo_stroke(cr);
-plot_data.x_tick_spacing=round(sample_rate/1200.0);
-int x_ticks=(int)floor(x_length/plot_data.x_tick_spacing);
-	for(int i=0;i<x_ticks;i++)
-	{
-	float x_offset=plot_data.x_origin+i*plot_data.x_tick_spacing+0.5;
-	cairo_move_to(cr,x_offset,y_origin);
-	cairo_line_to(cr,x_offset,y_origin+6);
-	cairo_stroke(cr);
-
-	char label[256];
-	sprintf(label,"%ds",i);
-	cairo_text_extents_t extents;
-	cairo_text_extents(cr,label,&extents);	
-	cairo_move_to(cr,(int)(x_offset-(int)(extents.width/2)-extents.x_bearing),(int)(8-extents.y_bearing+y_origin));
-	cairo_show_text(cr,label);
-	cairo_fill(cr);
-	}
-
-const int y_ticks=8;
-const int y_tick_freqs[8]={20000,10000,5000,2000,1000,500,200,100};
-
-cairo_move_to(cr,plot_data.x_origin+0.5,y_origin);
-cairo_line_to(cr,plot_data.x_origin+0.5,y_origin-y_length);
-
-	for(int i=0;i<y_ticks;i++)
-	{
-	float y_offset=y_origin-round(y_length*(1.0-(log(y_tick_freqs[i])-log(y_tick_freqs[0]))/(log(y_tick_freqs[y_ticks-1])-log(y_tick_freqs[0]))))+0.5;
-	cairo_move_to(cr,plot_data.x_origin,y_offset);
-	cairo_line_to(cr,plot_data.x_origin-5,y_offset);
-	cairo_stroke(cr);
-	
-	char label[256];
-		if(y_tick_freqs[i]>=1000)sprintf(label,"%d kHz",y_tick_freqs[i]/1000);
-		else sprintf(label,"%d Hz",y_tick_freqs[i]);
-	cairo_text_extents_t extents;
-	cairo_text_extents(cr,label,&extents);	
-	cairo_move_to(cr,(int)(plot_data.x_origin-(int)(extents.width)-extents.x_bearing-8),(int)(y_offset-extents.y_bearing-(int)(extents.height/2)));
-	cairo_show_text(cr,label);
-	cairo_fill(cr);
-	}
-
-int cursor_offset=plot_x_from_index(&plot_data,playback_state.index);
-cairo_move_to(cr,cursor_offset+0.5,y_origin);
-cairo_line_to(cr,cursor_offset+0.5,y_origin-y_length);
-cairo_set_source_rgba(cr,1.0,0,1.0,1.0);
-cairo_stroke(cr);
+gtk_render_background(context,cr,0,0,plot_data.width,plot_data.height);
+draw_plot(&plot_data,cr);
 
 return FALSE;
 }
 
-int update_plot(gpointer data)
-{
-	if(playing)g_timeout_add(50,update_plot,data);
-gtk_widget_queue_draw(GTK_WIDGET(data));
-}
 
-void pause_audio()
-{
-	if(playing)
-	{
-	sound_stop(&playback_state);
-	playing=0;
-	}
-}
 
-void play_audio()
-{
-	if(playing)pause_audio();
-sound_play(&playback_state,samples,num_samples,sample_rate,playback_state.index);
-playing=1;
-}
 
 
 void play_clicked(GtkWidget *widget,gpointer data)
@@ -275,6 +218,48 @@ play_auto=0;
 }
 
 
+gboolean on_scroll(GtkWidget *widget,GdkEvent *event,gpointer user_data)
+{
+	if(event->scroll.direction==GDK_SCROLL_UP)
+	{
+	plot_data.x_scroll++;
+	plot_update_spectrogram(&plot_data);
+		if(plot_x_from_index(&plot_data,plot_data.index)<75)
+		{
+		pause_audio();
+		playback_state.index=plot_index_from_x(&plot_data,75);
+		plot_data.index=playback_state.index;
+			if(plot_data.index>=plot_data.num_samples-1)
+			{
+			plot_data.x_scroll--;
+			plot_data.index=plot_data.num_samples-1;
+			playback_state.index=plot_data.num_samples-1;
+			}
+			else if(play_auto)play_audio();	
+		}
+	}
+	else if(event->scroll.direction==GDK_SCROLL_DOWN)
+	{
+		if(plot_data.x_scroll>0)
+		{
+		plot_data.x_scroll--;
+		plot_update_spectrogram(&plot_data);
+
+			if(plot_x_from_index(&plot_data,plot_data.index)>75+plot_get_x_length(&plot_data))
+			{
+			pause_audio();
+			playback_state.index=plot_index_from_x(&plot_data,75+plot_get_x_length(&plot_data));
+			plot_data.index=playback_state.index;
+				//I don't think this is ever actually triggered as it will autoscroll when playing
+				if(play_auto)play_audio();
+			}
+
+		}
+	}
+gtk_widget_queue_draw(GTK_WIDGET(widget));
+return TRUE;  
+}
+
 
 gboolean on_motion(GtkWidget *widget,GdkEvent *event,gpointer user_data)
 {
@@ -282,6 +267,7 @@ gboolean on_motion(GtkWidget *widget,GdkEvent *event,gpointer user_data)
 	{
 	pause_audio();
 	playback_state.index=plot_index_from_x(&plot_data,event->motion.x);
+	plot_data.index=playback_state.index;
 	gtk_widget_queue_draw(GTK_WIDGET(widget));
 	}
 }
@@ -299,40 +285,79 @@ button_pressed=0;
 update_plot(widget);
 }
 
+void on_open_clicked(GtkWidget *widget,gpointer data)
+{
+GtkWidget* dialog=gtk_file_chooser_dialog_new("Import Log File",GTK_WINDOW(data),GTK_FILE_CHOOSER_ACTION_OPEN,"_Cancel",GTK_RESPONSE_CANCEL,"_Import",GTK_RESPONSE_ACCEPT,NULL);
 
+gint res=gtk_dialog_run(GTK_DIALOG(dialog));
+	if(res==GTK_RESPONSE_ACCEPT)
+	{
+	char *filename;
+	GtkFileChooser* chooser=GTK_FILE_CHOOSER(dialog);
+    	filename=gtk_file_chooser_get_filename(chooser);
+		if(load_wav(filename))
+		{
+		gtk_widget_destroy (dialog);
+		char error_text[512];
+		sprintf(error_text,"Could not read WAV file %.400s",filename);
+		GtkWidget* error_dialog=gtk_message_dialog_new(GTK_WINDOW(data),GTK_DIALOG_DESTROY_WITH_PARENT,GTK_MESSAGE_ERROR,GTK_BUTTONS_OK,error_text);
+		gtk_window_set_title(GTK_WINDOW(error_dialog),"Error");
+		gtk_dialog_run(GTK_DIALOG(error_dialog));
+		gtk_widget_destroy(error_dialog);
+		return;
+		}
+	plot_update_spectrogram(&plot_data);
+	gtk_widget_queue_draw(GTK_WIDGET(data));
+	g_free(filename);
+	}
+gtk_widget_destroy (dialog);
+}
+
+
+gboolean on_window_delete(GtkWidget *widget,GdkEvent *event,gpointer data)
+{
+gtk_main_quit();
+return FALSE;
+}
 
 
 int main(int argc,char **argv)
 {
-	if(argc<2)
+	if(argc>1)
 	{
-	printf("Usage: spectrogram <file>\n");
-	return 1;
+		if(load_wav(argv[1]))
+		{
+		printf("Failed loading file %s\n",argv[1]);
+		return 1;
+		}
+	spectrum_cache_init(&(plot_data.spectrum_cache),plot_data.sample_rate);
 	}
-
-surface=cairo_image_surface_create(CAIRO_FORMAT_RGB24,1200,800);
-
+	else
+	{
+	plot_data.sample_rate=48000;
+	plot_data.num_samples=0;
+	plot_data.samples=NULL;
+	spectrum_cache_init(&(plot_data.spectrum_cache),48000);
+	}	
+	
 
 /*
 double freq_ref=200;
-sample_rate=8000;
-num_samples=8000;
-samples=calloc(num_samples,sizeof(double));
-	for(int i=0;i<num_samples;i++)
+plot_data.sample_rate=8000;
+plot_data.num_samples=8000;
+plot_data.samples=calloc(plot_data.num_samples,sizeof(double));
+	for(int i=0;i<plot_data.num_samples;i++)
 	{
-	samples[i]=sin(2*M_PI*freq_ref*(i/(double)sample_rate));
+	plot_data.samples[i]=sin(2*M_PI*freq_ref*(i/(double)plot_data.sample_rate));
 	}
 */
 
-	if(load_wav(argv[1]))
-	{
-	printf("Failed loading file %s\n",argv[1]);
-	return 1;
-	}	
+/*
+*/
 
-sample_step=1200;
-draw_spectrogram(surface,2048,48000,100.0,20000,sample_step,samples);
-
+plot_data.spectrogram=NULL;
+plot_data.width=0;
+plot_data.height=0;
 
 	if(sound_init())return 1;
 
@@ -358,7 +383,6 @@ gtk_builder_connect_signals(builder,NULL);
 gtk_widget_show_all(window);
 
 gtk_main();
-
 
 sound_finish();	
 return 0;
